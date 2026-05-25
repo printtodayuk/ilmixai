@@ -1,0 +1,6 @@
+{
+  "name": "ilmix AI",
+  "description": "A dynamic role based dashboard application with voice AI support, developed by Remotized IT.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

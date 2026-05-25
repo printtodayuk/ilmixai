@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isSignedIn() { return request.auth != null; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function isSuperAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == 'super_admin'; }
+    function isAltAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == 'alt_admin'; }
+    function isAdmin() { return isSuperAdmin() || isAltAdmin(); }
+    function isSupportEngineer() { return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == 'support_engineer'; }
+    function isStaff() { return isAdmin() || isSupportEngineer(); }
+
+    match /system/setup {
+      allow read: if true;
+      allow create: if isSignedIn() && !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    match /system/settings {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    match /pending_users/{userEmail} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.token.email == userEmail);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isStaff());
+      allow list: if isStaff();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId && (
+        isSuperAdmin() || 
+        (isAdmin() && incoming().role != 'super_admin') || 
+        (incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phoneNumber']))
+      );
+    }
+
+    match /tickets/{ticketId} {
+      allow get: if isSignedIn() && (isStaff() || existing().creatorUserId == request.auth.uid);
+      allow list: if isSignedIn() && (isStaff() || resource.data.creatorUserId == request.auth.uid);
+      allow create: if isSignedIn() && incoming().creatorUserId == request.auth.uid;
+      allow update: if isSignedIn() && incoming().creatorUserId == existing().creatorUserId && (
+        isAdmin() || 
+        (isSupportEngineer() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedTo', 'totalSupportTimeSeconds', 'timerState', 'timerLastStartedAt', 'updatedAt', 'closedAt']))
+      );
+    }
+
+    match /tickets/{ticketId}/comments/{commentId} {
+      allow get: if isSignedIn() && (
+        isStaff() || 
+        (!existing().isInternal && get(/databases/$(database)/documents/tickets/$(ticketId)).data.creatorUserId == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (
+        isStaff() || 
+        (resource.data.isInternal == false && get(/databases/$(database)/documents/tickets/$(ticketId)).data.creatorUserId == request.auth.uid)
+      );
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && (
+        isStaff() ||
+        (!incoming().isInternal && get(/databases/$(database)/documents/tickets/$(ticketId)).data.creatorUserId == request.auth.uid)
+      );
+      allow update, delete: if false;
+    }
+  }
+}
